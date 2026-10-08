@@ -90,28 +90,31 @@ def transcribe_audio(audio_file):
 
 def start_interview(resume_file, job_description_file):
     if resume_file is None:
-        return "Please upload your resume.", None, "❌ Resume missing"
+        return "Please upload your resume.", None, "❌ Resume missing", "", None, ""
 
     if job_description_file is None:
-        return "Please upload the job description.", None, "❌ Job description missing"
+        return "Please upload the job description.", None, "❌ Job description missing", "", None, ""
 
     try:
         resume_text = read_uploaded_text(resume_file)
         job_description = read_uploaded_text(job_description_file)
     except ValueError as exc:
-        return str(exc), None, "❌ File read error"
+        return str(exc), None, "❌ File read error", "", None, ""
 
     if not resume_text.strip() or not job_description.strip():
         return (
             "The uploaded files are empty or unreadable. Please upload valid text, PDF, or DOCX files.",
             None,
             "❌ Empty files",
+            "",
+            None,
+            "",
         )
 
     state = session_manager.start(resume_text, job_description)
     question = state["question"]
     audio = text_to_speech(question)
-    return question, audio, "🟢 Interview started"
+    return question, audio, "🟢 Interview started (Question 1 of 5)", "", None, ""
 
 
 def submit_answer(audio_file):
@@ -125,15 +128,30 @@ def submit_answer(audio_file):
     return transcript, "✅ Answer received"
 
 
-def get_feedback(question, answer):
-    if not answer or not answer.strip():
-        return "Please record and submit your answer first.", "❌ No answer available", question, None
-
+def get_feedback(question, answer, audio_file):
     result = session_manager.evaluate_answer(question, answer)
-    feedback = result.get("feedback", "Unable to generate feedback.")
     next_question = result.get("question", question)
-    next_audio = text_to_speech(next_question) if next_question != question else None
-    return feedback, "⭐ Feedback generated", next_question, next_audio
+    if not result.get("accepted"):
+        return (
+            result.get("feedback", "Unable to save this answer."),
+            "❌ Answer not saved",
+            next_question,
+            None,
+            answer,
+            audio_file,
+        )
+
+    answers_received = result.get("answers_received", 0)
+    if result.get("completed"):
+        feedback = result.get("feedback", "Unable to generate interview feedback.")
+        status = "⭐ Interview complete. All five answers were evaluated."
+        next_audio = None
+    else:
+        feedback = ""
+        status = f"✅ Answer {answers_received} of 5 saved. Continue to question {answers_received + 1}."
+        next_audio = text_to_speech(next_question)
+
+    return feedback, status, next_question, next_audio, "", None
 
 
 css = """
@@ -163,7 +181,7 @@ with gr.Blocks(title="AI Interview Coach") as demo:
     gr.Markdown(
         """
         # 🎤 AI Interview Coach
-        **Upload → Start → Listen → Record → Submit → Feedback**
+        **Upload → Answer five questions → Receive interview feedback**
         """
     )
 
@@ -219,10 +237,10 @@ with gr.Blocks(title="AI Interview Coach") as demo:
             interactive=False,
         )
 
-    feedback_button = gr.Button("⭐ Get Interview Feedback", variant="secondary")
+    feedback_button = gr.Button("➡ Save Answer & Continue", variant="secondary")
     feedback_output = gr.Textbox(
         label="🧠 AI Coach Feedback",
-        placeholder="Your interview feedback will appear here...",
+        placeholder="Final interview feedback appears after all five answers.",
         lines=5,
         max_lines=7,
         interactive=False,
@@ -231,7 +249,7 @@ with gr.Blocks(title="AI Interview Coach") as demo:
     start_button.click(
         fn=start_interview,
         inputs=[resume_file, jd_file],
-        outputs=[question_output, question_voice, status_output],
+        outputs=[question_output, question_voice, status_output, transcript_output, voice_input, feedback_output],
     )
 
     submit_button.click(
@@ -242,8 +260,8 @@ with gr.Blocks(title="AI Interview Coach") as demo:
 
     feedback_button.click(
         fn=get_feedback,
-        inputs=[question_output, transcript_output],
-        outputs=[feedback_output, status_output, question_output, question_voice],
+        inputs=[question_output, transcript_output, voice_input],
+        outputs=[feedback_output, status_output, question_output, question_voice, transcript_output, voice_input],
     )
 
 

@@ -14,8 +14,10 @@ class InterviewSession:
     resume_text: str = ""
     job_description: str = ""
     analysis: Dict[str, Any] = field(default_factory=dict)
+    interview_questions: List[str] = field(default_factory=list)
     current_question: str = ""
     previous_questions: List[str] = field(default_factory=list)
+    answered_questions: List[str] = field(default_factory=list)
     answers: List[str] = field(default_factory=list)
     feedback_history: List[str] = field(default_factory=list)
 
@@ -34,37 +36,93 @@ class InterviewManagerAgent(BaseAgent):
             job_description=job_description,
         )
         self.session.analysis = self.job_analysis_agent.analyze(resume_text, job_description)
-        self.session.current_question = self.interview_agent.generate_question(self.session.analysis)
+        self.session.interview_questions = self.session.analysis["interview_questions"]
+        self.session.current_question = self.interview_agent.next_question(
+            self.session.interview_questions,
+            answers_received=0,
+        )
         self.session.previous_questions.append(self.session.current_question)
         return {
             "analysis": self.session.analysis,
             "question": self.session.current_question,
+            "questions": self.session.interview_questions,
             "history": self.session.previous_questions,
         }
 
     def evaluate_answer(self, question: str, answer: str) -> Dict[str, Any]:
         if not answer or not answer.strip():
-            return {"feedback": "Please record and submit your answer first."}
+            return {
+                "feedback": "Please record and submit your answer first.",
+                "question": self.session.current_question,
+                "completed": False,
+                "accepted": False,
+                "answers_received": len(self.session.answers),
+            }
 
-        evaluation = self.evaluation_agent.evaluate(question, answer, self.session.analysis)
-        self.session.answers.append(answer)
-        self.session.feedback_history.append(evaluation["feedback"])
+        if not self.session.interview_questions:
+            return {
+                "feedback": "Start an interview before submitting an answer.",
+                "question": "",
+                "completed": False,
+                "accepted": False,
+                "answers_received": 0,
+            }
 
-        follow_up = self.interview_agent.generate_question(
+        if len(self.session.answers) >= len(self.session.interview_questions):
+            return {
+                "question": self.session.current_question,
+                "feedback": self.session.feedback_history[-1] if self.session.feedback_history else "",
+                "completed": True,
+                "accepted": False,
+                "answers_received": len(self.session.answers),
+            }
+
+        expected_question = self.session.interview_questions[len(self.session.answers)]
+        if question != expected_question:
+            return {
+                "question": expected_question,
+                "feedback": "This answer does not match the current interview question. Please answer the displayed question.",
+                "completed": False,
+                "accepted": False,
+                "answers_received": len(self.session.answers),
+            }
+
+        self.session.answered_questions.append(question)
+        self.session.answers.append(answer.strip())
+
+        if len(self.session.answers) < len(self.session.interview_questions):
+            next_question = self.interview_agent.next_question(
+                self.session.interview_questions,
+                answers_received=len(self.session.answers),
+            )
+            self.session.current_question = next_question
+            self.session.previous_questions.append(next_question)
+            return {
+                "question": next_question,
+                "feedback": "",
+                "completed": False,
+                "accepted": True,
+                "answers_received": len(self.session.answers),
+            }
+
+        evaluation = self.evaluation_agent.evaluate_interview(
+            self.session.answered_questions,
+            self.session.answers,
             self.session.analysis,
-            previous_question=question,
-            previous_answer=answer,
         )
-        self.session.current_question = follow_up
-        self.session.previous_questions.append(follow_up)
+        self.session.feedback_history.append(evaluation["feedback"])
+        self.session.current_question = "Interview complete. Your feedback is ready."
 
         return {
-            "question": follow_up,
+            "question": self.session.current_question,
             "feedback": evaluation["feedback"],
             "evaluation": evaluation,
+            "completed": True,
+            "accepted": True,
+            "answers_received": len(self.session.answers),
         }
 
     def final_summary(self) -> str:
         if not self.session.feedback_history:
             return "No evaluation recorded yet."
-        return "\n\n".join(self.session.feedback_history[-3:])
+        return self.session.feedback_history[-1]
