@@ -30,6 +30,9 @@ class InterviewManagerAgent(BaseAgent):
         self.evaluation_agent = EvaluationAgent(client, model)
         self.session = InterviewSession()
 
+    def reset(self) -> None:
+        self.session = InterviewSession()
+
     def start(self, resume_text: str, job_description: str) -> Dict[str, Any]:
         self.session = InterviewSession(
             resume_text=resume_text,

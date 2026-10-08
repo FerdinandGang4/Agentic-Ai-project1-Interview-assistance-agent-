@@ -117,6 +117,11 @@ def start_interview(resume_file, job_description_file):
     return question, audio, "🟢 Interview started (Question 1 of 5)", "", None, ""
 
 
+def reset_interview():
+    session_manager.reset()
+    return None, None, "", None, "Ready for a new interview.", "", None, ""
+
+
 def submit_answer(audio_file):
     if audio_file is None:
         return "", "❌ Record your answer first."
@@ -155,24 +160,217 @@ def get_feedback(question, answer, audio_file):
 
 
 css = """
+body {
+    background: linear-gradient(145deg, #f4f8f6 0%, #edf3f0 58%, #f7f8f4 100%);
+}
+
 .gradio-container {
-    max-width: 1150px !important;
-    margin: auto !important;
-    padding: 6px !important;
+    --ink: #20332f;
+    --muted: #687a75;
+    --line: #d9e3df;
+    --accent: #176b5c;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 28px clamp(22px, 3vw, 56px) 36px !important;
+    color: var(--ink) !important;
+    font-family: "Aptos", "Trebuchet MS", sans-serif !important;
 }
 
-h1 {
-    font-size: 24px !important;
-    margin: 2px !important;
+.gradio-container .main.fillable {
+    box-sizing: border-box !important;
+    max-width: none !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
 }
 
-h2 {
-    font-size: 17px !important;
-    margin: 2px !important;
+#app-header {
+    background: #523873;
+    border: 1px solid #523873;
+    border-radius: 8px;
+    margin-bottom: 24px;
+    padding: 24px 26px;
 }
 
-footer {
+#app-header p:first-child {
+    color: #d9c9ed;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin: 0 0 8px;
+}
+
+#app-header p:first-child strong {
+    color: inherit;
+}
+
+#app-header p:last-child {
+    color: #eee8f5;
+    font-size: 15px;
+    line-height: 1.6;
+    margin: 10px 0 0;
+}
+
+#app-header p:last-child strong {
+    color: #fff;
+}
+
+#app-header h1 {
+    color: #fff;
+    font-family: "Aptos Display", "Trebuchet MS", sans-serif;
+    font-size: 32px;
+    font-weight: 650;
+    line-height: 1.15;
+    margin: 0;
+}
+
+#app-footer {
+    margin-top: 36px;
+}
+
+.app-footer-inner {
+    align-items: center;
+    background: #523873;
+    border-radius: 8px;
+    color: #eee8f5;
+    display: flex;
+    font-size: 12px;
+    justify-content: space-between;
+    padding: 16px 20px;
+}
+
+.app-footer-inner strong {
+    color: #fff;
+    font-size: 11px;
+    letter-spacing: 0.7px;
+}
+
+#document-section {
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 24px;
+    padding-bottom: 24px;
+}
+
+.section-heading h3,
+#interviewer-column h3,
+#candidate-column h3 {
+    color: var(--ink);
+    font-size: 17px;
+    font-weight: 650;
+    margin: 0 0 12px;
+}
+
+.section-heading h3 {
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+
+#start-interview {
+    align-self: end;
+    min-height: 44px;
+    white-space: nowrap;
+}
+
+#reset-interview {
+    min-height: 42px;
+    white-space: nowrap;
+}
+
+#question-output textarea {
+    background: #f2f7f4 !important;
+    border: 1px solid #d2e2da !important;
+    border-left: 4px solid var(--accent) !important;
+    color: var(--ink) !important;
+    font-size: 18px !important;
+    line-height: 1.55 !important;
+    min-height: 126px !important;
+    padding: 18px !important;
+}
+
+#interviewer-column,
+#candidate-column {
+    min-width: 0;
+}
+
+#response-controls {
+    align-items: end;
+    margin-top: 8px;
+}
+
+#status-output textarea {
+    color: var(--muted) !important;
+    min-height: 42px !important;
+}
+
+#feedback-output textarea {
+    background: #f7f8f4 !important;
+    border-color: var(--line) !important;
+    color: var(--ink) !important;
+    line-height: 1.55 !important;
+}
+
+.gradio-container input,
+.gradio-container textarea,
+.gradio-container button {
+    border-radius: 6px !important;
+}
+
+.gradio-container input:focus,
+.gradio-container textarea:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgb(23 107 92 / 14%) !important;
+}
+
+.gradio-container button.primary {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+    color: #fff !important;
+}
+
+.gradio-container button.secondary {
+    background: #e4eee9 !important;
+    border-color: #d0dfd8 !important;
+    color: #205d50 !important;
+}
+
+.gradio-container button:hover {
+    filter: brightness(0.96);
+}
+
+footer:not(.app-footer-inner) {
     display: none !important;
+}
+
+@media (max-width: 760px) {
+    .gradio-container {
+        padding: 18px 16px 24px !important;
+    }
+
+    #app-header h1 {
+        font-size: 27px;
+    }
+
+    #app-header p:last-child {
+        font-size: 14px;
+    }
+
+    .app-footer-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    #question-output textarea {
+        font-size: 16px !important;
+        min-height: 112px !important;
+    }
+
+    #start-interview {
+        width: 100%;
+    }
 }
 """
 
@@ -180,70 +378,88 @@ footer {
 with gr.Blocks(title="AI Interview Coach") as demo:
     gr.Markdown(
         """
-        # 🎤 AI Interview Coach
-        **Upload → Answer five questions → Receive interview feedback**
-        """
+        **INTERVIEW WORKSPACE**
+
+        # AI Interview Coach
+
+        **Workflow:** Upload your resume and job description → Start interview → Record, transcribe, and save each answer → Review final feedback after question five.
+        """,
+        elem_id="app-header",
     )
 
-    with gr.Row():
-        resume_file = gr.File(
-            label="📄 Resume",
-            file_types=[".pdf", ".docx", ".txt"],
-            type="filepath",
-            height=65,
-        )
-        jd_file = gr.File(
-            label="📋 Job Description",
-            file_types=[".pdf", ".docx", ".txt"],
-            type="filepath",
-            height=65,
-        )
-        start_button = gr.Button("▶ Start Interview", variant="primary")
+    with gr.Column(elem_id="document-section"):
+        gr.Markdown("### Candidate documents", elem_classes=["section-heading"])
+        with gr.Row(equal_height=True):
+            resume_file = gr.File(
+                label="Resume",
+                file_types=[".pdf", ".docx", ".txt"],
+                type="filepath",
+                height=76,
+                scale=1,
+            )
+            jd_file = gr.File(
+                label="Job description",
+                file_types=[".pdf", ".docx", ".txt"],
+                type="filepath",
+                height=76,
+                scale=1,
+            )
+            with gr.Column(scale=0, min_width=176):
+                start_button = gr.Button("Start interview", variant="primary", elem_id="start-interview")
+                reset_button = gr.Button("Reset interview", variant="secondary", elem_id="reset-interview")
 
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("## 🤖 Interviewer")
+    with gr.Row(elem_id="interview-section", equal_height=False):
+        with gr.Column(scale=3, elem_id="interviewer-column"):
+            gr.Markdown("### Interviewer")
             question_output = gr.Textbox(
-                label="Question",
-                lines=2,
-                max_lines=3,
+                label="Current question",
+                lines=4,
+                max_lines=5,
                 interactive=False,
+                elem_id="question-output",
             )
             question_voice = gr.Audio(
-                label="🔊 Question Audio",
+                label="Question audio",
                 autoplay=True,
                 interactive=False,
             )
 
-        with gr.Column(scale=1):
-            gr.Markdown("## 🎙️ Your Answer")
+        with gr.Column(scale=2, elem_id="candidate-column"):
+            gr.Markdown("### Candidate response")
             voice_input = gr.Audio(
                 sources=["microphone"],
                 type="filepath",
-                label="Record Answer",
+                label="Record your answer",
             )
-            submit_button = gr.Button("✅ Submit Answer", variant="primary")
+            submit_button = gr.Button("Transcribe answer", variant="primary")
 
-    with gr.Row():
+    with gr.Row(elem_id="response-controls"):
         transcript_output = gr.Textbox(
-            label="📝 Your Answer",
+            label="Transcribed answer",
             lines=2,
-            max_lines=3,
+            max_lines=4,
             interactive=False,
+            scale=3,
         )
-        status_output = gr.Textbox(
-            label="Status",
-            lines=1,
-            interactive=False,
-        )
-
-    feedback_button = gr.Button("➡ Save Answer & Continue", variant="secondary")
+        with gr.Column(scale=2):
+            status_output = gr.Textbox(
+                label="Interview status",
+                lines=1,
+                interactive=False,
+                elem_id="status-output",
+            )
+            feedback_button = gr.Button("Save answer & continue", variant="secondary")
     feedback_output = gr.Textbox(
-        label="🧠 AI Coach Feedback",
+        label="Final interview feedback",
         placeholder="Final interview feedback appears after all five answers.",
         lines=5,
         max_lines=7,
         interactive=False,
+        elem_id="feedback-output",
+    )
+    gr.HTML(
+        '<footer class="app-footer-inner"><strong>AI INTERVIEW COACH</strong><span>Career development workspace</span></footer>',
+        elem_id="app-footer",
     )
 
     start_button.click(
@@ -262,6 +478,12 @@ with gr.Blocks(title="AI Interview Coach") as demo:
         fn=get_feedback,
         inputs=[question_output, transcript_output, voice_input],
         outputs=[feedback_output, status_output, question_output, question_voice, transcript_output, voice_input],
+    )
+
+    reset_button.click(
+        fn=reset_interview,
+        inputs=[],
+        outputs=[resume_file, jd_file, question_output, question_voice, status_output, transcript_output, voice_input, feedback_output],
     )
 
 
