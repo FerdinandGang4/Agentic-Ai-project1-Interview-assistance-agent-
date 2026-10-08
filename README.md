@@ -17,19 +17,21 @@ Demonstrate how a multi-agent workflow can analyze candidate and job information
 | Agent | Responsibility |
 | --- | --- |
 | Resume and Job Analysis Agent | Extracts relevant skills, strengths, matches, and gaps; creates four tailored questions and prepares the interview context. |
-| Interviewer Agent | Presents the prepared questions one at a time and advances the interview in order. |
+| Interviewer Agent | Greets the candidate, starts with “Tell me about yourself,” then presents the prepared questions one at a time. |
 | Evaluation Agent | Reviews the complete set of questions and answers after the final response and produces overall feedback. |
 | Interview Manager Agent | Coordinates the agents, tracks interview progress, stores each question with its answer, and handles session reset. |
 
 A shared base agent provides the OpenAI model interface used by the specialized agents.
 
+Fixed closing and fallback questions are stored in [`questions/question_bank.json`](questions/question_bank.json). Resume- and job-specific questions are generated for each interview and kept in the active session.
+
 ### 4. Interview Workflow
 
 1. The candidate uploads a resume and a job description.
 2. The analysis agent compares the documents and prepares the question set.
-3. The interviewer asks four role-tailored questions, one at a time. The fifth asks whether the candidate has questions for the interviewer.
+3. The interviewer greets the candidate and asks “Tell me about yourself,” then asks four role-tailored questions. The sixth and final question invites the candidate to ask the interviewer a question.
 4. The candidate records an answer. The application transcribes it and stores it with the current question before continuing.
-5. After the fifth answer, the evaluation agent reviews the full interview and presents overall feedback.
+5. After the sixth answer, the evaluation agent reviews the full interview and presents overall feedback.
 6. The candidate can reset the session and start another interview.
 
 ### 5. Suggested Presentation Demo
@@ -73,6 +75,6 @@ The interface accepts resume and job-description files in PDF, DOCX, or TXT form
 
 ## Current Scope and Limitations
 
-- The first four questions are tailored during document analysis; the fifth is a fixed question inviting the candidate to ask the interviewer something.
-- Answers are collected during the interview and evaluated together after question five. Per-answer feedback and adaptive follow-up generation are not part of the current flow, although they are ideas in the original design.
+- The opening question and final candidate question are fixed; the four questions between them are tailored during document analysis.
+- Answers are collected during the interview and evaluated together after question six. Per-answer feedback and adaptive follow-up generation are not part of the current flow, although they are ideas in the original design.
 - Interview state is held in application memory and is cleared by Reset. It is not persisted as a long-term candidate record.

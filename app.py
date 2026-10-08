@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from agents.interview_manager_agent import InterviewManagerAgent
+from questions import TOTAL_QUESTION_COUNT
 
 
 load_dotenv()
@@ -114,7 +115,7 @@ def start_interview(resume_file, job_description_file):
     state = session_manager.start(resume_text, job_description)
     question = state["question"]
     audio = text_to_speech(question)
-    return question, audio, "🟢 Interview started (Question 1 of 5)", "", None, ""
+    return question, audio, f"🟢 Interview started (Question 1 of {TOTAL_QUESTION_COUNT})", "", None, ""
 
 
 def reset_interview():
@@ -149,11 +150,11 @@ def get_feedback(question, answer, audio_file):
     answers_received = result.get("answers_received", 0)
     if result.get("completed"):
         feedback = result.get("feedback", "Unable to generate interview feedback.")
-        status = "⭐ Interview complete. All five answers were evaluated."
+        status = f"⭐ Interview complete. All {TOTAL_QUESTION_COUNT} answers were evaluated."
         next_audio = None
     else:
         feedback = ""
-        status = f"✅ Answer {answers_received} of 5 saved. Continue to question {answers_received + 1}."
+        status = f"✅ Answer {answers_received} of {TOTAL_QUESTION_COUNT} saved. Continue to question {answers_received + 1}."
         next_audio = text_to_speech(next_question)
 
     return feedback, status, next_question, next_audio, "", None
@@ -382,7 +383,7 @@ with gr.Blocks(title="AI Interview Coach") as demo:
 
         # AI Interview Coach
 
-        **Workflow:** Upload your resume and job description → Start interview → Record, transcribe, and save each answer → Review final feedback after question five.
+        **Workflow:** Upload your resume and job description → Start interview → Answer the opening question and four tailored questions → Ask your own question → Review feedback after question six.
         """,
         elem_id="app-header",
     )
@@ -451,7 +452,7 @@ with gr.Blocks(title="AI Interview Coach") as demo:
             feedback_button = gr.Button("Save answer & continue", variant="secondary")
     feedback_output = gr.Textbox(
         label="Final interview feedback",
-        placeholder="Final interview feedback appears after all five answers.",
+        placeholder="Final interview feedback appears after all six answers.",
         lines=5,
         max_lines=7,
         interactive=False,

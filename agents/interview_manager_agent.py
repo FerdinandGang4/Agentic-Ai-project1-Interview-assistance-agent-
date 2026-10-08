@@ -7,6 +7,7 @@ from .evaluation_agent import EvaluationAgent
 from .interview_agent import InterviewAgent
 from .job_analysis_agent import JobAnalysisAgent
 from .base_agent import BaseAgent
+from questions import COMPLETION_MESSAGE, OPENING_QUESTION
 
 
 @dataclass
@@ -39,7 +40,7 @@ class InterviewManagerAgent(BaseAgent):
             job_description=job_description,
         )
         self.session.analysis = self.job_analysis_agent.analyze(resume_text, job_description)
-        self.session.interview_questions = self.session.analysis["interview_questions"]
+        self.session.interview_questions = [OPENING_QUESTION] + self.session.analysis["interview_questions"]
         self.session.current_question = self.interview_agent.next_question(
             self.session.interview_questions,
             answers_received=0,
@@ -114,7 +115,7 @@ class InterviewManagerAgent(BaseAgent):
             self.session.analysis,
         )
         self.session.feedback_history.append(evaluation["feedback"])
-        self.session.current_question = "Interview complete. Your feedback is ready."
+        self.session.current_question = COMPLETION_MESSAGE
 
         return {
             "question": self.session.current_question,

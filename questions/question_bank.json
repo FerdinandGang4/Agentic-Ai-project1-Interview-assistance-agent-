@@ -1,0 +1,12 @@
+{
+  "tailored_question_count": 4,
+  "opening_question": "Hello, I am Jagua, your virtual recruiter. To get started, tell me about yourself.",
+  "final_candidate_question": "Do you have any questions for us about the role, team, or interview process?",
+  "fallback_questions": [
+    "Describe how your experience prepares you for this role.",
+    "Tell me about a challenging project relevant to this position.",
+    "How do you approach solving a difficult technical problem?",
+    "Describe a time you collaborated to achieve a work goal."
+  ],
+  "completion_message": "Interview complete. Your feedback is ready."
+}
