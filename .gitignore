@@ -150,6 +150,15 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Local auth store (hashed passwords)
+auth/users.json
+
+# Generated downloadable reports
+downloads/
+
+# Per-user resumes, JDs, and conversation history
+user_data/
+
 # Environments
 .env
 .envrc

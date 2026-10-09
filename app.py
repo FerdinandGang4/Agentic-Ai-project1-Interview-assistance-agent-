@@ -1,12 +1,36 @@
 import os
 import uuid
+from pathlib import Path
 
 import gradio as gr
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from agents.interview_manager_agent import InterviewManagerAgent
+from auth import (
+    build_auth_panel,
+    build_header,
+    handle_login,
+    handle_logout,
+    handle_register,
+)
+from library import (
+    delete_document,
+    get_document_path,
+    save_conversation,
+    save_document,
+)
+from library.helpers import (
+    audio_choices_for_conversation,
+    conversation_choices,
+    document_choices,
+    library_dropdowns,
+    render_conversation_preview,
+    user_key,
+)
 from questions import TOTAL_QUESTION_COUNT
+from reports import build_feedback_report, build_study_pack
+from ui import APP_CSS, build_interview_workspace
 
 
 load_dotenv()
@@ -35,7 +59,7 @@ def read_uploaded_text(file_path):
             try:
                 from pypdf import PdfReader
             except ImportError as exc:
-                raise RuntimeError("Missing dependency: install with 'pip install pypdf'") from exc
+                raise RuntimeError("Missing dependency: install with 'uv add pypdf'") from exc
 
             reader = PdfReader(file_path)
             pages = [page.extract_text() or "" for page in reader.pages]
@@ -45,7 +69,7 @@ def read_uploaded_text(file_path):
             try:
                 from docx import Document
             except ImportError as exc:
-                raise RuntimeError("Missing dependency: install with 'pip install python-docx'") from exc
+                raise RuntimeError("Missing dependency: install with 'uv add python-docx'") from exc
 
             doc = Document(file_path)
             return "\n".join(paragraph.text for paragraph in doc.paragraphs)
@@ -89,38 +113,172 @@ def transcribe_audio(audio_file):
         return None
 
 
-def start_interview(resume_file, job_description_file):
-    if resume_file is None:
-        return "Please upload your resume.", None, "❌ Resume missing", "", None, ""
+def _empty_downloads():
+    return None, None, ""
 
-    if job_description_file is None:
-        return "Please upload the job description.", None, "❌ Job description missing", "", None, ""
+
+def _empty_history():
+    return (
+        "<div class='history-preview muted'>Select a past interview to read answers.</div>",
+        gr.update(choices=[], value=None),
+        None,
+    )
+
+
+def _resolve_document(user, upload_path, selected_id, kind: str, auto_save: bool):
+    email = user_key(user)
+    name = ""
+    path = None
+
+    if upload_path:
+        path = Path(upload_path)
+        name = path.name
+        if auto_save and email:
+            try:
+                item = save_document(email, kind, path, display_name=name)
+                name = item["name"]
+            except Exception as exc:
+                print(f"Auto-save {kind} failed:", exc)
+        return str(path), name
+
+    if selected_id and email:
+        saved = get_document_path(email, kind, selected_id)
+        if saved and saved.exists():
+            # recover display name from choices index
+            for label, value in document_choices(email, kind):
+                if value == selected_id:
+                    name = label.split("  ·  ")[0]
+                    break
+            return str(saved), name or saved.name
+
+    return None, ""
+
+
+def start_interview(user, resume_file, job_description_file, saved_resume, saved_jd, auto_save):
+    if not user:
+        return (
+            "Please log in first.",
+            None,
+            "❌ Not signed in",
+            "",
+            None,
+            "",
+            *_empty_downloads(),
+            *library_dropdowns(user)[:3],
+            "",
+        )
+
+    resume_path, resume_name = _resolve_document(
+        user, resume_file, saved_resume, "resume", bool(auto_save)
+    )
+    jd_path, jd_name = _resolve_document(
+        user, job_description_file, saved_jd, "job", bool(auto_save)
+    )
+
+    if not resume_path:
+        return (
+            "Choose a saved resume or upload a new one.",
+            None,
+            "❌ Resume missing",
+            "",
+            None,
+            "",
+            *_empty_downloads(),
+            *library_dropdowns(user)[:3],
+            "Select or upload a resume.",
+        )
+
+    if not jd_path:
+        return (
+            "Choose a saved job description or upload a new one.",
+            None,
+            "❌ Job description missing",
+            "",
+            None,
+            "",
+            *_empty_downloads(),
+            *library_dropdowns(user)[:3],
+            "Select or upload a job description.",
+        )
 
     try:
-        resume_text = read_uploaded_text(resume_file)
-        job_description = read_uploaded_text(job_description_file)
+        resume_text = read_uploaded_text(resume_path)
+        job_description = read_uploaded_text(jd_path)
     except ValueError as exc:
-        return str(exc), None, "❌ File read error", "", None, ""
+        return (
+            str(exc),
+            None,
+            "❌ File read error",
+            "",
+            None,
+            "",
+            *_empty_downloads(),
+            *library_dropdowns(user)[:3],
+            str(exc),
+        )
 
     if not resume_text.strip() or not job_description.strip():
         return (
-            "The uploaded files are empty or unreadable. Please upload valid text, PDF, or DOCX files.",
+            "The selected files are empty or unreadable.",
             None,
             "❌ Empty files",
             "",
             None,
             "",
+            *_empty_downloads(),
+            *library_dropdowns(user)[:3],
+            "Files were empty.",
         )
 
-    state = session_manager.start(resume_text, job_description)
+    state = session_manager.start(
+        resume_text,
+        job_description,
+        resume_name=resume_name,
+        job_name=jd_name,
+    )
     question = state["question"]
     audio = text_to_speech(question)
-    return question, audio, f"🟢 Interview started (Question 1 of {TOTAL_QUESTION_COUNT})", "", None, ""
+    session_manager.record_question_audio(audio)
+    name = user.get("name", "Candidate")
+    resumes, jobs, history = library_dropdowns(user)[:3]
+    return (
+        question,
+        audio,
+        f"🟢 Started for {name} — Q1/{TOTAL_QUESTION_COUNT}. Using {resume_name or 'resume'} + {jd_name or 'JD'}.",
+        "",
+        None,
+        "",
+        *_empty_downloads(),
+        resumes,
+        jobs,
+        history,
+        "✅ Library updated.",
+    )
 
 
-def reset_interview():
+def reset_interview(user=None):
     session_manager.reset()
-    return None, None, "", None, "Ready for a new interview.", "", None, ""
+    lib = library_dropdowns(user)
+    return (
+        None,  # resume upload
+        None,  # jd upload
+        "",  # question
+        None,  # question audio
+        "Ready for a new interview.",
+        "",  # transcript
+        None,  # mic
+        "",  # feedback
+        None,  # feedback file
+        None,  # study file
+        "",  # download status
+        lib[0],  # saved resumes
+        lib[1],  # saved jds
+        lib[2],  # past interviews
+        lib[3],  # history preview
+        lib[4],  # history audio choices
+        lib[5],  # history audio player
+        "",  # library status
+    )
 
 
 def submit_answer(audio_file):
@@ -134,9 +292,11 @@ def submit_answer(audio_file):
     return transcript, "✅ Answer received"
 
 
-def get_feedback(question, answer, audio_file):
+def get_feedback(user, question, answer, audio_file):
     result = session_manager.evaluate_answer(question, answer)
     next_question = result.get("question", question)
+    history_updates = library_dropdowns(user)[2:3]  # past conversations dropdown only
+
     if not result.get("accepted"):
         return (
             result.get("feedback", "Unable to save this answer."),
@@ -145,348 +305,398 @@ def get_feedback(question, answer, audio_file):
             None,
             answer,
             audio_file,
+            None,
+            None,
+            "",
+            history_updates[0] if history_updates else gr.update(),
+            "",
         )
+
+    # Persist answer audio for this turn
+    session_manager.record_answer_audio(audio_file if audio_file else None)
 
     answers_received = result.get("answers_received", 0)
     if result.get("completed"):
         feedback = result.get("feedback", "Unable to generate interview feedback.")
-        status = f"⭐ Interview complete. All {TOTAL_QUESTION_COUNT} answers were evaluated."
+        status = (
+            f"⭐ Complete — all {TOTAL_QUESTION_COUNT} answers evaluated. "
+            "Conversation saved to your library."
+        )
         next_audio = None
+        email = user_key(user)
+        if email:
+            ctx = session_manager.get_report_context()
+            try:
+                save_conversation(
+                    email,
+                    questions=ctx.get("answered_questions") or [],
+                    answers=ctx.get("answers") or [],
+                    feedback=feedback,
+                    question_audio_paths=ctx.get("question_audio_paths") or [],
+                    answer_audio_paths=ctx.get("answer_audio_paths") or [],
+                    resume_name=ctx.get("resume_name") or "",
+                    job_name=ctx.get("job_name") or "",
+                )
+            except Exception as exc:
+                print("Conversation save failed:", exc)
+                status += " (history save failed)"
+        past = library_dropdowns(user)[2]
+        lib_msg = "✅ Interview saved to Past interviews."
     else:
         feedback = ""
-        status = f"✅ Answer {answers_received} of {TOTAL_QUESTION_COUNT} saved. Continue to question {answers_received + 1}."
+        status = f"✅ Saved {answers_received}/{TOTAL_QUESTION_COUNT}. Next: Q{answers_received + 1}."
         next_audio = text_to_speech(next_question)
+        session_manager.record_question_audio(next_audio)
+        past = library_dropdowns(user)[2]
+        lib_msg = ""
 
-    return feedback, status, next_question, next_audio, "", None
+    return (
+        feedback,
+        status,
+        next_question,
+        next_audio,
+        "",
+        None,
+        None,
+        None,
+        "",
+        past,
+        lib_msg,
+    )
 
 
-css = """
-body {
-    background: linear-gradient(145deg, #f4f8f6 0%, #edf3f0 58%, #f7f8f4 100%);
-}
+def download_feedback(user, fmt):
+    if not user:
+        return None, "❌ Log in first."
 
-.gradio-container {
-    --ink: #20332f;
-    --muted: #687a75;
-    --line: #d9e3df;
-    --accent: #176b5c;
-    box-sizing: border-box !important;
-    width: 100% !important;
-    max-width: none !important;
-    margin: 0 !important;
-    padding: 28px clamp(22px, 3vw, 56px) 36px !important;
-    color: var(--ink) !important;
-    font-family: "Aptos", "Trebuchet MS", sans-serif !important;
-}
+    ctx = session_manager.get_report_context()
+    feedback = ctx.get("feedback") or ""
+    if not feedback or feedback == "No evaluation recorded yet.":
+        return None, "❌ Finish the interview first to download feedback."
 
-.gradio-container .main.fillable {
-    box-sizing: border-box !important;
-    max-width: none !important;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
-}
+    path = build_feedback_report(
+        user=user,
+        feedback=feedback,
+        questions=ctx.get("answered_questions") or [],
+        answers=ctx.get("answers") or [],
+        fmt=(fmt or "PDF").lower(),
+    )
+    if not path:
+        return None, "❌ Could not build the feedback file."
+    return path, f"✅ Feedback ready ({fmt})."
 
-#app-header {
-    background: #523873;
-    border: 1px solid #523873;
-    border-radius: 8px;
-    margin-bottom: 24px;
-    padding: 24px 26px;
-}
 
-#app-header p:first-child {
-    color: #d9c9ed;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    margin: 0 0 8px;
-}
+def download_study(user, fmt):
+    if not user:
+        return None, "❌ Log in first."
 
-#app-header p:first-child strong {
-    color: inherit;
-}
+    ctx = session_manager.get_report_context()
+    if not ctx.get("analysis") and not ctx.get("resume_text"):
+        return None, "❌ Start an interview first so the pack matches your documents."
 
-#app-header p:last-child {
-    color: #eee8f5;
-    font-size: 15px;
-    line-height: 1.6;
-    margin: 10px 0 0;
-}
+    path, message = build_study_pack(
+        client=client,
+        user=user,
+        analysis=ctx.get("analysis") or {},
+        resume_text=ctx.get("resume_text") or "",
+        job_description=ctx.get("job_description") or "",
+        interview_questions=ctx.get("interview_questions") or [],
+        fmt=(fmt or "PDF").lower(),
+    )
+    if not path:
+        return None, f"❌ {message}"
+    return path, f"✅ {message}"
 
-#app-header p:last-child strong {
-    color: #fff;
-}
 
-#app-header h1 {
-    color: #fff;
-    font-family: "Aptos Display", "Trebuchet MS", sans-serif;
-    font-size: 32px;
-    font-weight: 650;
-    line-height: 1.15;
-    margin: 0;
-}
+def login_with_library(email, password):
+    auth_result = handle_login(email, password)
+    user = auth_result[0]
+    return (*auth_result, *library_dropdowns(user))
 
-#app-footer {
-    margin-top: 36px;
-}
 
-.app-footer-inner {
-    align-items: center;
-    background: #523873;
-    border-radius: 8px;
-    color: #eee8f5;
-    display: flex;
-    font-size: 12px;
-    justify-content: space-between;
-    padding: 16px 20px;
-}
+def register_with_library(name, email, password):
+    auth_result = handle_register(name, email, password)
+    user = auth_result[0]
+    return (*auth_result, *library_dropdowns(user))
 
-.app-footer-inner strong {
-    color: #fff;
-    font-size: 11px;
-    letter-spacing: 0.7px;
-}
 
-#document-section {
-    border-bottom: 1px solid var(--line);
-    margin-bottom: 24px;
-    padding-bottom: 24px;
-}
+def logout_and_reset():
+    session_manager.reset()
+    auth_result = handle_logout()
+    empty_lib = library_dropdowns(None)
+    interview_clear = (
+        None,
+        None,
+        "",
+        None,
+        "Ready for a new interview.",
+        "",
+        None,
+        "",
+        None,
+        None,
+        "",
+    )
+    return (*auth_result, *empty_lib, *interview_clear)
 
-.section-heading h3,
-#interviewer-column h3,
-#candidate-column h3 {
-    color: var(--ink);
-    font-size: 17px;
-    font-weight: 650;
-    margin: 0 0 12px;
-}
 
-.section-heading h3 {
-    color: var(--muted);
-    font-size: 12px;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-}
+def save_resume_to_library(user, resume_file):
+    email = user_key(user)
+    if not email:
+        return gr.update(), "❌ Log in first."
+    if not resume_file:
+        return gr.update(choices=document_choices(email, "resume")), "❌ Choose a resume file to save."
+    try:
+        item = save_document(email, "resume", resume_file)
+        choices = document_choices(email, "resume")
+        return gr.update(choices=choices, value=item["id"]), f"✅ Saved resume: {item['name']}"
+    except Exception as exc:
+        return gr.update(choices=document_choices(email, "resume")), f"❌ {exc}"
 
-#start-interview {
-    align-self: end;
-    min-height: 44px;
-    white-space: nowrap;
-}
 
-#reset-interview {
-    min-height: 42px;
-    white-space: nowrap;
-}
+def save_jd_to_library(user, jd_file):
+    email = user_key(user)
+    if not email:
+        return gr.update(), "❌ Log in first."
+    if not jd_file:
+        return gr.update(choices=document_choices(email, "job")), "❌ Choose a JD file to save."
+    try:
+        item = save_document(email, "job", jd_file)
+        choices = document_choices(email, "job")
+        return gr.update(choices=choices, value=item["id"]), f"✅ Saved JD: {item['name']}"
+    except Exception as exc:
+        return gr.update(choices=document_choices(email, "job")), f"❌ {exc}"
 
-#question-output textarea {
-    background: #f2f7f4 !important;
-    border: 1px solid #d2e2da !important;
-    border-left: 4px solid var(--accent) !important;
-    color: var(--ink) !important;
-    font-size: 18px !important;
-    line-height: 1.55 !important;
-    min-height: 126px !important;
-    padding: 18px !important;
-}
 
-#interviewer-column,
-#candidate-column {
-    min-width: 0;
-}
+def delete_resume_from_library(user, selected_id):
+    email = user_key(user)
+    if not email:
+        return gr.update(), "❌ Log in first."
+    if not selected_id:
+        return gr.update(choices=document_choices(email, "resume")), "❌ Select a resume to delete."
+    delete_document(email, "resume", selected_id)
+    choices = document_choices(email, "resume")
+    return gr.update(choices=choices, value=choices[0][1] if choices else None), "✅ Resume deleted."
 
-#response-controls {
-    align-items: end;
-    margin-top: 8px;
-}
 
-#status-output textarea {
-    color: var(--muted) !important;
-    min-height: 42px !important;
-}
+def delete_jd_from_library(user, selected_id):
+    email = user_key(user)
+    if not email:
+        return gr.update(), "❌ Log in first."
+    if not selected_id:
+        return gr.update(choices=document_choices(email, "job")), "❌ Select a JD to delete."
+    delete_document(email, "job", selected_id)
+    choices = document_choices(email, "job")
+    return gr.update(choices=choices, value=choices[0][1] if choices else None), "✅ Job description deleted."
 
-#feedback-output textarea {
-    background: #f7f8f4 !important;
-    border-color: var(--line) !important;
-    color: var(--ink) !important;
-    line-height: 1.55 !important;
-}
 
-.gradio-container input,
-.gradio-container textarea,
-.gradio-container button {
-    border-radius: 6px !important;
-}
+def open_past_conversation(user, conversation_id):
+    email = user_key(user)
+    if not email:
+        return (*_empty_history(), "❌ Log in first.")
+    if not conversation_id:
+        return (*_empty_history(), "❌ Select a past interview.")
+    preview, _, _ = render_conversation_preview(email, conversation_id)
+    audio_choices = audio_choices_for_conversation(email, conversation_id)
+    first_audio = audio_choices[0][1] if audio_choices else None
+    return (
+        preview,
+        gr.update(choices=audio_choices, value=first_audio),
+        first_audio,
+        "✅ Conversation loaded. Pick an audio clip to listen.",
+    )
 
-.gradio-container input:focus,
-.gradio-container textarea:focus {
-    border-color: var(--accent) !important;
-    box-shadow: 0 0 0 2px rgb(23 107 92 / 14%) !important;
-}
 
-.gradio-container button.primary {
-    background: var(--accent) !important;
-    border-color: var(--accent) !important;
-    color: #fff !important;
-}
-
-.gradio-container button.secondary {
-    background: #e4eee9 !important;
-    border-color: #d0dfd8 !important;
-    color: #205d50 !important;
-}
-
-.gradio-container button:hover {
-    filter: brightness(0.96);
-}
-
-footer:not(.app-footer-inner) {
-    display: none !important;
-}
-
-@media (max-width: 760px) {
-    .gradio-container {
-        padding: 18px 16px 24px !important;
-    }
-
-    #app-header h1 {
-        font-size: 27px;
-    }
-
-    #app-header p:last-child {
-        font-size: 14px;
-    }
-
-    .app-footer-inner {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    #question-output textarea {
-        font-size: 16px !important;
-        min-height: 112px !important;
-    }
-
-    #start-interview {
-        width: 100%;
-    }
-}
-"""
+def play_history_audio(audio_path):
+    if not audio_path:
+        return None
+    return audio_path if Path(audio_path).exists() else None
 
 
 with gr.Blocks(title="AI Interview Coach") as demo:
-    gr.Markdown(
-        """
-        **INTERVIEW WORKSPACE**
+    user_state = gr.State(None)
 
-        # AI Interview Coach
+    user_chip, logout_button = build_header()
+    auth = build_auth_panel()
+    interview = build_interview_workspace()
 
-        **Workflow:** Upload your resume and job description → Start interview → Answer the opening question and four tailored questions → Ask your own question → Review feedback after question six.
-        """,
-        elem_id="app-header",
-    )
-
-    with gr.Column(elem_id="document-section"):
-        gr.Markdown("### Candidate documents", elem_classes=["section-heading"])
-        with gr.Row(equal_height=True):
-            resume_file = gr.File(
-                label="Resume",
-                file_types=[".pdf", ".docx", ".txt"],
-                type="filepath",
-                height=76,
-                scale=1,
-            )
-            jd_file = gr.File(
-                label="Job description",
-                file_types=[".pdf", ".docx", ".txt"],
-                type="filepath",
-                height=76,
-                scale=1,
-            )
-            with gr.Column(scale=0, min_width=176):
-                start_button = gr.Button("Start interview", variant="primary", elem_id="start-interview")
-                reset_button = gr.Button("Reset interview", variant="secondary", elem_id="reset-interview")
-
-    with gr.Row(elem_id="interview-section", equal_height=False):
-        with gr.Column(scale=3, elem_id="interviewer-column"):
-            gr.Markdown("### Interviewer")
-            question_output = gr.Textbox(
-                label="Current question",
-                lines=4,
-                max_lines=5,
-                interactive=False,
-                elem_id="question-output",
-            )
-            question_voice = gr.Audio(
-                label="Question audio",
-                autoplay=True,
-                interactive=False,
-            )
-
-        with gr.Column(scale=2, elem_id="candidate-column"):
-            gr.Markdown("### Candidate response")
-            voice_input = gr.Audio(
-                sources=["microphone"],
-                type="filepath",
-                label="Record your answer",
-            )
-            submit_button = gr.Button("Transcribe answer", variant="primary")
-
-    with gr.Row(elem_id="response-controls"):
-        transcript_output = gr.Textbox(
-            label="Transcribed answer",
-            lines=2,
-            max_lines=4,
-            interactive=False,
-            scale=3,
-        )
-        with gr.Column(scale=2):
-            status_output = gr.Textbox(
-                label="Interview status",
-                lines=1,
-                interactive=False,
-                elem_id="status-output",
-            )
-            feedback_button = gr.Button("Save answer & continue", variant="secondary")
-    feedback_output = gr.Textbox(
-        label="Final interview feedback",
-        placeholder="Final interview feedback appears after all six answers.",
-        lines=5,
-        max_lines=7,
-        interactive=False,
-        elem_id="feedback-output",
-    )
     gr.HTML(
         '<footer class="app-footer-inner"><strong>AI INTERVIEW COACH</strong><span>Career development workspace</span></footer>',
         elem_id="app-footer",
     )
 
-    start_button.click(
-        fn=start_interview,
-        inputs=[resume_file, jd_file],
-        outputs=[question_output, question_voice, status_output, transcript_output, voice_input, feedback_output],
+    library_outputs = [
+        interview["saved_resume"],
+        interview["saved_jd"],
+        interview["past_conversation"],
+        interview["history_preview"],
+        interview["history_audio_choice"],
+        interview["history_audio"],
+    ]
+
+    auth_event_outputs = [
+        user_state,
+        user_chip,
+        auth["auth_status"],
+        auth["auth_section"],
+        interview["workspace"],
+        logout_button,
+        auth["name_input"],
+        auth["email_input"],
+        auth["password_input"],
+    ]
+
+    interview_clear_outputs = [
+        interview["resume_file"],
+        interview["jd_file"],
+        interview["question_output"],
+        interview["question_voice"],
+        interview["status_output"],
+        interview["transcript_output"],
+        interview["voice_input"],
+        interview["feedback_output"],
+        interview["feedback_file"],
+        interview["study_file"],
+        interview["download_status"],
+    ]
+
+    auth["login_button"].click(
+        fn=login_with_library,
+        inputs=[auth["email_input"], auth["password_input"]],
+        outputs=[*auth_event_outputs, *library_outputs],
     )
 
-    submit_button.click(
-        fn=submit_answer,
-        inputs=[voice_input],
-        outputs=[transcript_output, status_output],
+    auth["register_button"].click(
+        fn=register_with_library,
+        inputs=[auth["name_input"], auth["email_input"], auth["password_input"]],
+        outputs=[*auth_event_outputs, *library_outputs],
     )
 
-    feedback_button.click(
-        fn=get_feedback,
-        inputs=[question_output, transcript_output, voice_input],
-        outputs=[feedback_output, status_output, question_output, question_voice, transcript_output, voice_input],
-    )
-
-    reset_button.click(
-        fn=reset_interview,
+    logout_button.click(
+        fn=logout_and_reset,
         inputs=[],
-        outputs=[resume_file, jd_file, question_output, question_voice, status_output, transcript_output, voice_input, feedback_output],
+        outputs=[*auth_event_outputs, *library_outputs, *interview_clear_outputs],
+    )
+
+    interview["save_resume_btn"].click(
+        fn=save_resume_to_library,
+        inputs=[user_state, interview["resume_file"]],
+        outputs=[interview["saved_resume"], interview["library_status"]],
+    )
+    interview["save_jd_btn"].click(
+        fn=save_jd_to_library,
+        inputs=[user_state, interview["jd_file"]],
+        outputs=[interview["saved_jd"], interview["library_status"]],
+    )
+    interview["delete_resume_btn"].click(
+        fn=delete_resume_from_library,
+        inputs=[user_state, interview["saved_resume"]],
+        outputs=[interview["saved_resume"], interview["library_status"]],
+    )
+    interview["delete_jd_btn"].click(
+        fn=delete_jd_from_library,
+        inputs=[user_state, interview["saved_jd"]],
+        outputs=[interview["saved_jd"], interview["library_status"]],
+    )
+    interview["load_history_btn"].click(
+        fn=open_past_conversation,
+        inputs=[user_state, interview["past_conversation"]],
+        outputs=[
+            interview["history_preview"],
+            interview["history_audio_choice"],
+            interview["history_audio"],
+            interview["library_status"],
+        ],
+    )
+    interview["history_audio_choice"].change(
+        fn=play_history_audio,
+        inputs=[interview["history_audio_choice"]],
+        outputs=[interview["history_audio"]],
+    )
+
+    interview["start_button"].click(
+        fn=start_interview,
+        inputs=[
+            user_state,
+            interview["resume_file"],
+            interview["jd_file"],
+            interview["saved_resume"],
+            interview["saved_jd"],
+            interview["auto_save_docs"],
+        ],
+        outputs=[
+            interview["question_output"],
+            interview["question_voice"],
+            interview["status_output"],
+            interview["transcript_output"],
+            interview["voice_input"],
+            interview["feedback_output"],
+            interview["feedback_file"],
+            interview["study_file"],
+            interview["download_status"],
+            interview["saved_resume"],
+            interview["saved_jd"],
+            interview["past_conversation"],
+            interview["library_status"],
+        ],
+    )
+
+    interview["submit_button"].click(
+        fn=submit_answer,
+        inputs=[interview["voice_input"]],
+        outputs=[interview["transcript_output"], interview["status_output"]],
+    )
+
+    interview["feedback_button"].click(
+        fn=get_feedback,
+        inputs=[
+            user_state,
+            interview["question_output"],
+            interview["transcript_output"],
+            interview["voice_input"],
+        ],
+        outputs=[
+            interview["feedback_output"],
+            interview["status_output"],
+            interview["question_output"],
+            interview["question_voice"],
+            interview["transcript_output"],
+            interview["voice_input"],
+            interview["feedback_file"],
+            interview["study_file"],
+            interview["download_status"],
+            interview["past_conversation"],
+            interview["library_status"],
+        ],
+    )
+
+    interview["download_feedback_btn"].click(
+        fn=download_feedback,
+        inputs=[user_state, interview["download_format"]],
+        outputs=[interview["feedback_file"], interview["download_status"]],
+    )
+
+    interview["download_study_btn"].click(
+        fn=download_study,
+        inputs=[user_state, interview["download_format"]],
+        outputs=[interview["study_file"], interview["download_status"]],
+    )
+
+    interview["reset_button"].click(
+        fn=reset_interview,
+        inputs=[user_state],
+        outputs=[
+            *interview_clear_outputs,
+            interview["saved_resume"],
+            interview["saved_jd"],
+            interview["past_conversation"],
+            interview["history_preview"],
+            interview["history_audio_choice"],
+            interview["history_audio"],
+            interview["library_status"],
+        ],
     )
 
 
 if __name__ == "__main__":
-    demo.launch(inbrowser=True, css=css)
+    demo.launch(inbrowser=True, share=True,css=APP_CSS)

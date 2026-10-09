@@ -14,6 +14,8 @@ from questions import COMPLETION_MESSAGE, OPENING_QUESTION
 class InterviewSession:
     resume_text: str = ""
     job_description: str = ""
+    resume_name: str = ""
+    job_name: str = ""
     analysis: Dict[str, Any] = field(default_factory=dict)
     interview_questions: List[str] = field(default_factory=list)
     current_question: str = ""
@@ -21,6 +23,8 @@ class InterviewSession:
     answered_questions: List[str] = field(default_factory=list)
     answers: List[str] = field(default_factory=list)
     feedback_history: List[str] = field(default_factory=list)
+    question_audio_paths: List[str | None] = field(default_factory=list)
+    answer_audio_paths: List[str | None] = field(default_factory=list)
 
 
 class InterviewManagerAgent(BaseAgent):
@@ -34,10 +38,18 @@ class InterviewManagerAgent(BaseAgent):
     def reset(self) -> None:
         self.session = InterviewSession()
 
-    def start(self, resume_text: str, job_description: str) -> Dict[str, Any]:
+    def start(
+        self,
+        resume_text: str,
+        job_description: str,
+        resume_name: str = "",
+        job_name: str = "",
+    ) -> Dict[str, Any]:
         self.session = InterviewSession(
             resume_text=resume_text,
             job_description=job_description,
+            resume_name=resume_name or "",
+            job_name=job_name or "",
         )
         self.session.analysis = self.job_analysis_agent.analyze(resume_text, job_description)
         self.session.interview_questions = [OPENING_QUESTION] + self.session.analysis["interview_questions"]
@@ -52,6 +64,12 @@ class InterviewManagerAgent(BaseAgent):
             "questions": self.session.interview_questions,
             "history": self.session.previous_questions,
         }
+
+    def record_question_audio(self, audio_path: str | None) -> None:
+        self.session.question_audio_paths.append(audio_path)
+
+    def record_answer_audio(self, audio_path: str | None) -> None:
+        self.session.answer_audio_paths.append(audio_path)
 
     def evaluate_answer(self, question: str, answer: str) -> Dict[str, Any]:
         if not answer or not answer.strip():
@@ -130,3 +148,23 @@ class InterviewManagerAgent(BaseAgent):
         if not self.session.feedback_history:
             return "No evaluation recorded yet."
         return self.session.feedback_history[-1]
+
+    def get_report_context(self) -> Dict[str, Any]:
+        """Snapshot used by downloadable feedback and study-pack builders."""
+        return {
+            "analysis": dict(self.session.analysis or {}),
+            "resume_text": self.session.resume_text,
+            "job_description": self.session.job_description,
+            "resume_name": self.session.resume_name,
+            "job_name": self.session.job_name,
+            "interview_questions": list(self.session.interview_questions),
+            "answered_questions": list(self.session.answered_questions),
+            "answers": list(self.session.answers),
+            "question_audio_paths": list(self.session.question_audio_paths),
+            "answer_audio_paths": list(self.session.answer_audio_paths),
+            "feedback": self.final_summary() if self.session.feedback_history else "",
+            "completed": bool(
+                self.session.interview_questions
+                and len(self.session.answers) >= len(self.session.interview_questions)
+            ),
+        }
