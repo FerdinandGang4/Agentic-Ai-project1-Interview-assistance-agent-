@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from .evaluation_agent import EvaluationAgent
+from .guardrails import InputGuardrails, OutputGuardrails
 from .interview_agent import InterviewAgent
 from .job_analysis_agent import JobAnalysisAgent
 from .base_agent import BaseAgent
@@ -33,6 +34,8 @@ class InterviewManagerAgent(BaseAgent):
         self.job_analysis_agent = JobAnalysisAgent(client, model)
         self.interview_agent = InterviewAgent(client, model)
         self.evaluation_agent = EvaluationAgent(client, model)
+        self.input_guardrails = InputGuardrails(client, model)
+        self.output_guardrails = OutputGuardrails(client, model)
         self.session = InterviewSession()
 
     def reset(self) -> None:
@@ -45,6 +48,19 @@ class InterviewManagerAgent(BaseAgent):
         resume_name: str = "",
         job_name: str = "",
     ) -> Dict[str, Any]:
+        # Diagram Step 2: Input Guardrails before analysis / orchestration
+        gate = self.input_guardrails.validate_documents(resume_text, job_description)
+        if not gate.ok:
+            self.session = InterviewSession()
+            return {
+                "blocked": True,
+                "reason": gate.reason,
+                "analysis": {},
+                "question": "",
+                "questions": [],
+                "history": [],
+            }
+
         self.session = InterviewSession(
             resume_text=resume_text,
             job_description=job_description,
@@ -59,6 +75,8 @@ class InterviewManagerAgent(BaseAgent):
         )
         self.session.previous_questions.append(self.session.current_question)
         return {
+            "blocked": False,
+            "reason": gate.reason,
             "analysis": self.session.analysis,
             "question": self.session.current_question,
             "questions": self.session.interview_questions,
@@ -132,16 +150,26 @@ class InterviewManagerAgent(BaseAgent):
             self.session.answers,
             self.session.analysis,
         )
-        self.session.feedback_history.append(evaluation["feedback"])
+        # Diagram output gate: validate feedback before it reaches the UI/report
+        guarded = self.output_guardrails.validate_feedback(evaluation.get("feedback", ""))
+        safe_feedback = guarded.text or evaluation.get("feedback", "")
+        evaluation = dict(evaluation)
+        evaluation["feedback"] = safe_feedback
+        evaluation["output_guardrail"] = {
+            "ok": guarded.ok,
+            "reason": guarded.reason,
+        }
+        self.session.feedback_history.append(safe_feedback)
         self.session.current_question = COMPLETION_MESSAGE
 
         return {
             "question": self.session.current_question,
-            "feedback": evaluation["feedback"],
+            "feedback": safe_feedback,
             "evaluation": evaluation,
             "completed": True,
             "accepted": True,
             "answers_received": len(self.session.answers),
+            "output_guardrail_ok": guarded.ok,
         }
 
     def final_summary(self) -> str:

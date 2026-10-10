@@ -55,17 +55,30 @@ body {
     margin: 0 !important;
 }
 
-#header-copy p {
-    color: #d7c8ea !important;
-    font-size: 10px !important;
+/* Force light contrast on purple header (Gradio defaults use dark ink) */
+#app-header #header-copy,
+#app-header #header-copy p,
+#app-header #header-copy strong,
+#app-header #header-copy span,
+#app-header #header-copy * {
+    color: #f0e8fa !important;
+}
+
+#app-header #header-copy p {
+    color: #f0e8fa !important;
+    font-size: 11px !important;
     font-weight: 700 !important;
-    letter-spacing: 1.2px !important;
+    letter-spacing: 1.3px !important;
     margin: 0 0 4px !important;
+    opacity: 1 !important;
     text-transform: uppercase !important;
 }
 
-#header-copy h1 {
-    color: #fff !important;
+#header-copy h1,
+#header-copy h1 strong,
+#app-header #header-copy h1,
+#app-header #header-copy h1 * {
+    color: #ffffff !important;
     font-size: 22px !important;
     font-weight: 700 !important;
     letter-spacing: -0.02em !important;
@@ -93,8 +106,9 @@ body {
     padding: 6px 12px 6px 6px;
 }
 
-.user-chip-guest {
-    color: #d7c8ea;
+.user-chip-guest,
+.user-chip-guest span {
+    color: #f0e8fa !important;
     justify-content: center;
     padding: 8px 14px;
 }

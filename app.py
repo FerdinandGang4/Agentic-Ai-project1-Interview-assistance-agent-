@@ -236,15 +236,32 @@ def start_interview(user, resume_file, job_description_file, saved_resume, saved
         resume_name=resume_name,
         job_name=jd_name,
     )
+    resumes, jobs, history = library_dropdowns(user)[:3]
+
+    if state.get("blocked"):
+        reason = state.get("reason") or "Documents blocked by input guardrails."
+        return (
+            "",
+            None,
+            f"🛡️ Input guardrail blocked start: {reason}",
+            "",
+            None,
+            "",
+            *_empty_downloads(),
+            resumes,
+            jobs,
+            history,
+            f"❌ {reason}",
+        )
+
     question = state["question"]
     audio = text_to_speech(question)
     session_manager.record_question_audio(audio)
     name = user.get("name", "Candidate")
-    resumes, jobs, history = library_dropdowns(user)[:3]
     return (
         question,
         audio,
-        f"🟢 Started for {name} — Q1/{TOTAL_QUESTION_COUNT}. Using {resume_name or 'resume'} + {jd_name or 'JD'}.",
+        f"🟢 Guardrails passed · Started for {name} — Q1/{TOTAL_QUESTION_COUNT}. Using {resume_name or 'resume'} + {jd_name or 'JD'}.",
         "",
         None,
         "",
@@ -252,7 +269,7 @@ def start_interview(user, resume_file, job_description_file, saved_resume, saved
         resumes,
         jobs,
         history,
-        "✅ Library updated.",
+        "✅ Library updated. Input guardrails passed.",
     )
 
 

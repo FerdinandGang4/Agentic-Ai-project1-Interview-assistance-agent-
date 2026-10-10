@@ -13,7 +13,8 @@ def build_header() -> tuple[gr.HTML, gr.Button]:
         with gr.Column(scale=4, min_width=220):
             gr.Markdown(
                 """
-                **Interview workspace**
+                Interview workspace
+
                 # AI Interview Coach
                 """,
                 elem_id="header-copy",
